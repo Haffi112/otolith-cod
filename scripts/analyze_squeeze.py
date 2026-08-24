@@ -98,11 +98,18 @@ def fit_predict(features, labels, train, test):
 
 def score(y_true, y_pred):
     y_pred = np.clip(np.round(y_pred).astype(int), *AGE) if y_pred.dtype.kind == "f" else y_pred
+    ages = list(range(AGE[0], AGE[1] + 1))
     return {
         "accuracy": float((y_pred == y_true).mean()),
         "accuracy_pm1": float((np.abs(y_pred - y_true) <= 1).mean()),
         "f1": float(f1_score(y_true, y_pred, average="macro", zero_division=0)),
         "mae": float(np.abs(y_pred - y_true).mean()),
+        # Per-class F1 is what says *where* a variant gains. The manuscript
+        # reports which ages augmentation and pairing help most, and a claim
+        # like that needs the numbers behind it rather than an impression.
+        "f1_per_class": [float(v) for v in
+                         f1_score(y_true, y_pred, average=None, labels=ages,
+                                  zero_division=0)],
     }
 
 
@@ -329,6 +336,27 @@ def main():
               + f"   mean {np.mean(deltas):+5.2f}   {agree}/{len(deltas)} positive")
         report[name]["paired_deltas_pp"] = deltas
         report[name]["seeds_favouring"] = agree
+
+    # Per-class F1, averaged over seeds, for the variants the manuscript
+    # discusses by age. Printed as a table and stored so the appendix table in
+    # the paper can be generated from this file rather than typed.
+    ages = list(range(AGE[0], AGE[1] + 1))
+    per_class = {}
+    for name in ("baseline", "augment", "concat", "augment_concat"):
+        if per_seed[name]:
+            per_class[name] = np.mean([r["f1_per_class"] for r in per_seed[name]],
+                                      axis=0).tolist()
+    if len(per_class) > 1:
+        print("\nPer-class F1 (%), mean over seeds; deltas against the baseline:")
+        print(f"  {'age':>3} " + " ".join(f"{n:>15}" for n in per_class))
+        for i, age in enumerate(ages):
+            cells = []
+            for name, values in per_class.items():
+                v = 100 * values[i]
+                cells.append(f"{v:6.1f}" + ("" if name == "baseline" else
+                             f" ({v - 100 * per_class['baseline'][i]:+5.1f})"))
+            print(f"  {age:>3} " + " ".join(f"{c:>15}" for c in cells))
+        report["per_class_f1"] = {"ages": ages, **per_class}
 
     if per_seed["augment"] and per_seed["augment_concat"]:
         def mean_delta(name):
